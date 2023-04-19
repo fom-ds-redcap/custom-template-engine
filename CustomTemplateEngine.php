@@ -46,8 +46,6 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
          */
         $this->templates_dir = $this->getSystemSetting("templates-folder");
         $this->compiled_dir = $this->getSystemSetting("compiled-templates-folder");
-        $this->temp_dir = $this->getSystemSetting("temp-folder");
-        $this->img_dir = $this->getSystemSetting("img-folder");
         $this->pid = $this->getProjectId();
 
         if (!empty($this->pid))
@@ -116,36 +114,6 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                 if (!mkdir($this->compiled_dir, 0777, true))
                 {
                     exit("<div class='red'><b>ERROR</b> Unable to create directory $this->compiled_dir to store compiled templates. Please contact your systems administrator to  make sure the location is writable.</div>");
-                }
-            }
-        }
-
-        if (empty($this->temp_dir))
-        {
-            exit("<div class='red'><b>ERROR</b> Compiled templates directory has not been set. Please contact your REDCap administrator.</div>");
-        }
-        else
-        {
-            if (!file_exists($this->temp_dir))
-            {
-                if (!mkdir($this->temp_dir, 0777, true))
-                {
-                    exit("<div class='red'><b>ERROR</b> Unable to create directory $this->temp_dir to store temporary files. Please contact your systems administrator to  make sure the location is writable.</div>");
-                }
-            }
-        }
-
-        if (empty($this->img_dir))
-        {
-            exit("<div class='red'><b>ERROR</b> Images directory has not been set. Please contact your REDCap administrator.</div>");
-        }
-        else
-        {
-            if (!file_exists($this->img_dir))
-            {
-                if (!mkdir($this->img_dir, 0777, true))
-                {
-                    exit("<div class='red'><b>ERROR</b> Unable to create directory $this->img_dir to store template. Please contact your systems administrator to  make sure the location is writable.</div>");
                 }
             }
         }
@@ -241,7 +209,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
             $redcap_repeat_instance = $event_data["redcap_repeat_instance"];
             if (isset($redcap_repeat_instance) && !empty($redcap_repeat_instance))
             { 
-                $instance = $redcap_repeat_instance == 1 ? null : $redcap_repeat_instance; // First instance is represented by null in db
+                $instance = $redcap_repeat_instance; // First instance is represented by null in db
             }
         }
 
@@ -296,7 +264,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
             }
         }
 
-        return null;
+        return 1;
     }
 
     /**
@@ -326,174 +294,15 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      * Saves a file to a REDCap field in the project. Assumes the field is a file upload field. Returns false on failure, and true otherwise.
      * Currently no compatible with repeating events.
      */
-    public function saveFileToField($filename, $file_contents, $field_name, $record, $event_id)
+    public function saveFileToField($filename, $field_name, $record, $event_id)
     {
-        // Save file to edocs tables in the REDCap database
-        $database_success = FALSE;
-        $upload_success = FALSE;
-
-        $dummy_file_name = $filename . ".pdf";
-        $dummy_file_name = preg_replace("/[^a-zA-Z-._0-9]/","_",$dummy_file_name);
-        $dummy_file_name = str_replace("__","_",$dummy_file_name);
-        $dummy_file_name = str_replace("__","_",$dummy_file_name);
-
-        $stored_name = date('YmdHis') . "_pid" . $this->pid . "_" . generateRandomHash(6) . ".pdf";
-
-        $upload_success = file_put_contents(EDOC_PATH . $stored_name, $file_contents);
-
-        if ($upload_success !== FALSE) 
-        {
-            $dummy_file_size = $upload_success;
-
-            $query = $this->framework->createQuery();
-            $query->add("INSERT INTO redcap_edocs_metadata (stored_name,mime_type,doc_name,doc_size,file_extension,project_id,stored_date) 
-                        VALUES ('$stored_name','application/pdf',?,?,'pdf',?,?)", [$dummy_file_name, $dummy_file_size, $this->pid, date('Y-m-d H:i:s')]);
-    
-            if ($query->execute()) 
-            {
-                $docs_id = db_insert_id();
-                
-                // Always save report to the latest repeatable instance, otherwise null
-                $instance = $this->getLatestRepeatableInstance($record, $event_id, $field_name);
-
-                // See if field has had a previous value. If so, update; if not, insert.
-                $query = $this->framework->createQuery();
-                $query->add("SELECT value FROM redcap_data
-                            WHERE project_id = ? AND record = ? AND event_id = ? AND field_name = ?", [$this->pid, $record, $event_id, $field_name]);
-
-                if (!isset($instance))
-                {
-                    $query->add("AND instance is NULL");
-                }
-                else
-                {
-                    $query->add("AND instance = ?", [$instance]);
-                }
-                
-                $result = $query->execute();
-
-                if ($result && $result->num_rows > 0) // row exists
-                {
-                    // Set the file as "deleted" in redcap_edocs_metadata table, but don't really delete the file or the table entry (unless the File Version History is enabled for the project)
-                    if ($GLOBALS['file_upload_versioning_global_enabled'] == '' && $this->Proj->project['file_upload_versioning_enabled'] != '1')
-                    {
-                        while ($row = $result->fetch_assoc()) {
-                            $id = $row["value"];
-                        }
-
-                        $query = $this->framework->createQuery();
-                        $query->add("UPDATE redcap_edocs_metadata SET delete_date = ? WHERE doc_id = ?", [NOW, $id]);
-                        $query->execute();
-                    }
-
-                    $query = $this->framework->createQuery();
-                    $query->add("UPDATE redcap_data SET value = ? WHERE project_id = ? AND record = ? AND event_id = ? AND field_name = ?", [$docs_id, $this->pid, $record, $event_id, $field_name]);
-
-                    if (!isset($instance))
-                    {
-                        $query->add("AND instance is NULL");
-                    }
-                    else
-                    {
-                        $query->add("AND instance = ?", [$instance]);
-                    }
-                }
-                else // row did not exist
-                {
-                    // If this is a longitudinal project and this file is being added to an event without data,
-                    // then add a row for the record ID field too (so it doesn't get orphaned).
-                    if ($this->Proj->longitudinal) 
-                    {
-                        $query = $this->framework->createQuery();
-                        $query->add("SELECT 1 FROM redcap_data WHERE project_id = ? AND record = ? AND event_id = ?", [$this->pid, $record, $event_id]);
-
-                        if ($instance > 1)
-                        {
-                            $query->add("AND instance = ?", [$instance]);
-                        }
-                        else
-                        {
-                            $query->add("AND instance is NULL");
-                        }
-
-                        $query->add("LIMIT 1");
-
-                        $result = $query->execute();
-
-                        if ($result && $result->num_rows == 0) 
-                        {
-                            $instance = $instance > 1 ? $instance : "NULL";
-                            $query = $this->framework->createQuery();
-                            $query->add("INSERT INTO redcap_data (project_id, event_id, record, field_name, value, instance) VALUES (?, ?, ?, ?, ?, ?)",
-                                        [$this->pid, $event_id, $record, $this->Proj->table_pk, $record, $instance]);
-                            $query->execute();
-                        }
-                    }
-        
-                    // Add an entry in redcap_data that contains the edoc ID
-                    $query = $this->framework->createQuery();
-                    if (!isset($instance))
-                    {
-                        $query->add("INSERT INTO redcap_data (project_id, event_id, record, field_name, value, instance) VALUES (?, ?, ?, ?, ?, ?)",
-                                    [$this->pid, $event_id, $record, $field_name, $docs_id, null]);
-                    }
-                    else
-                    {
-                        $query->add("INSERT INTO redcap_data (project_id, event_id, record, field_name, value, instance) VALUES (?, ?, ?, ?, ?, ?)",
-                                    [$this->pid, $event_id, $record, $field_name, $docs_id, $instance]);
-                    }
-                }
-
-                if ($query->execute())
-                {
-                    // Logging event as DOC_UPLOAD allows file history to be built.
-                    $redcap_log_event_table = method_exists('\REDCap', 'getLogEventTable') ? REDCap::getLogEventTable($this->pid) : "redcap_log_event";
-                    $current_timestamp = date("YmdHis");
-                    $ip = $_SERVER["REMOTE_ADDR"];
-                    $description = isset($instance) ? "[instance = $instance],\n$field_name = '$docs_id'" : "$field_name = '$docs_id'";
-                    $sql = str_replace("'", "''", $sql);
-
-                    $query = $this->framework->createQuery();
-                    $query->add("INSERT INTO $redcap_log_event_table (ts, user, ip, page, project_id, event, object_type, sql_log, pk, event_id, data_values, description) VALUES (?, ?, ?, 'ExternalModules/index.php', ?, 'DOC_UPLOAD', 'redcap_data', ?, ?, ?, ?, 'Upload Document')",
-                                [$current_timestamp, $this->userid, $ip, $this->pid, $sql, $record, $event_id, $description]);
-                    $query->execute();
-
-                    return true;
-                }
-            }
-        }
-
-        return false;
+        $docs_id = REDCap::storeFile($this->getSystemSetting("temp-folder") . $filename, $this->pid); 
+        $instance = $this->getLatestRepeatableInstance($record, $event_id, $field_name);
+        return REDCap::addFileToField($docs_id, $this->pid, $record, $field_name, $event_id, $instance);
     }
 
     /**
-     * Helper function that deletes a file from the File Repository, if REDCap data about it fails
-     * to be inserted to the database.Stolen code from redcap version/FileRepository/index.php.
-     * 
-     * @param String $file     Name of file to delete
-     * @since 1.0
-     * @access private
-     */
-    private function deleteRepositoryFile($file)
-    {
-        global $edoc_storage_option,$wdc,$webdav_path;
-        if ($edoc_storage_option == '1') {
-            // Webdav
-            $wdc->delete($webdav_path . $file);
-        } elseif ($edoc_storage_option == '2') {
-            // S3
-            global $amazon_s3_key, $amazon_s3_secret, $amazon_s3_bucket;
-            $s3 = new S3($amazon_s3_key, $amazon_s3_secret, SSL); if (isset($GLOBALS['amazon_s3_endpoint']) && $GLOBALS['amazon_s3_endpoint'] != '') $s3->setEndpoint($GLOBALS['amazon_s3_endpoint']);
-            $s3->deleteObject($amazon_s3_bucket, $file);
-        } else {
-            // Local
-            @unlink(EDOC_PATH . $file);
-        }
-    }
-
-    /**
-     * Saves a file to REDCap's File Repository. Based off stolen code from redcap version/FileRepository/index.php
-     * with several modifications
+     * Saves a file to REDCap's File Repository.
      * 
      * @param String $filename         Name of file
      * @param String $file_contents    Contents of file
@@ -504,99 +313,10 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      */
     private function saveToFileRepository($filename, $file_contents, $file_extension)  
     {   
-        // Upload the compiled report to the File Repository
-        $errors = array();
-        $database_success = FALSE;
-        $upload_success = FALSE;
-
-        $dummy_file_name = $filename;
-        $dummy_file_name = preg_replace("/[^a-zA-Z-._0-9]/","_",$dummy_file_name);
-        $dummy_file_name = str_replace("__","_",$dummy_file_name);
-        $dummy_file_name = str_replace("__","_",$dummy_file_name);
-
-        $stored_name = date('YmdHis') . "_pid" . $this->pid . "_" . generateRandomHash(6) . ".$file_extension";
-
-        $upload_success = file_put_contents(EDOC_PATH . $stored_name, $file_contents);
-
-        if ($upload_success !== FALSE) 
-        {
-            $dummy_file_size = $upload_success;
-            $dummy_file_type = "application/$file_extension";
-            
-            $file_repo_name = date("Y/m/d H:i:s");
-
-            $query = $this->framework->createQuery();
-            $query->add("INSERT INTO redcap_docs (project_id,docs_date,docs_name,docs_size,docs_type,docs_comment,docs_rights) VALUES (?, CURRENT_DATE, ?, ?, ?, ?, NULL)",
-                        [$this->pid, "$dummy_file_name.$file_extension", $dummy_file_size, $dummy_file_type, "$file_repo_name - $filename ($this->userid)"]);
-                            
-            if ($query->execute()) 
-            {
-                $docs_id = db_insert_id();
-
-                $query = $this->framework->createQuery();
-                $query->add("INSERT INTO redcap_edocs_metadata (stored_name,mime_type,doc_name,doc_size,file_extension,project_id,stored_date) VALUES(?,?,?,?,?,?,?)",
-                            [$stored_name, $dummy_file_type, "$dummy_file_name.$file_extension", $dummy_file_size, $file_extension, $this->pid, date('Y-m-d H:i:s')]);
-                            
-                if ($query->execute()) 
-                {
-                    $doc_id = db_insert_id();
-
-                    $query = $this->framework->createQuery();
-                    $query->add("INSERT INTO redcap_docs_to_edocs (docs_id,doc_id) VALUES (?,?)", [$docs_id, $doc_id]);
-                                
-                    if ($query->execute()) 
-                    {
-                        $context_msg_insert = "{$lang['docs_22']} {$lang['docs_08']}";
-
-                        // Logging
-                        REDCap::logEvent("Custom Template Engine - Uploaded document to file repository", "Successfully uploaded $filename");
-                        $context_msg = str_replace('{fetched}', '', $context_msg_insert);
-                        $database_success = TRUE;
-                    } 
-                    else 
-                    {
-                        /* if this failed, we need to roll back redcap_edocs_metadata and redcap_docs */
-                        $query = $this->framework->createQuery();
-                        $query->add("DELETE FROM redcap_edocs_metadata WHERE doc_id=?", [$doc_id]);
-                        $query->execute();
-
-                        $query = $this->framework->createQuery();
-                        $query->add("DELETE FROM redcap_docs WHERE docs_id=?", [$docs_id]);
-                        $query->execute();
-
-                        $this->deleteRepositoryFile($stored_name);
-                    }
-                } 
-                else
-                {
-                    /* if we failed here, we need to roll back redcap_docs */
-                    $query = $this->framework->createQuery();
-                    $query->add("DELETE FROM redcap_docs WHERE docs_id=?", [$docs_id]);
-                    $query->execute();
-                    
-                    $this->deleteRepositoryFile($stored_name);
-                }
-            }
-            else 
-            {
-                /* if we failed here, we need to delete the file */
-                $this->deleteRepositoryFile($stored_name);
-            }            
-        }
-
-        if ($database_success === FALSE) 
-        {
-            $context_msg = "<b>{$lang['global_01']}{$lang['colon']} {$lang['docs_47']}</b><br>" . $lang['docs_65'] . ' ' . maxUploadSizeFileRespository().'MB'.$lang['period'];
-                            
-            if (SUPER_USER) 
-            {
-                $context_msg .= '<br><br>' . $lang['system_config_69'];
-            }
-
-            return $context_msg;
-        }
-
-        return true;
+        $file_path = $this->getSystemSetting("temp-folder") . "{$filename}.{$file_extension}";
+        file_put_contents($file_path, $file_contents);
+        $docs_id = REDCap::storeFile($file_path, $this->pid);
+        return REDCap::addFileToRepository($docs_id, $this->pid);
     }
 
     /**
@@ -879,11 +599,10 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      */
     public function deleteTemplate()
     {
-        $templateToDelete = $_POST["templateToDelete"];
-        if (unlink($this->templates_dir . $templateToDelete))
+        if (REDCap::deleteRecord($this->getSystemSetting("config-pid"), $_POST["templateToDelete"])) 
         {
             REDCap::logEvent("Custom Template Engine - Deleted template", $templateToDelete);
-            return TRUE;
+            return true;
         }
         else
         {
@@ -901,148 +620,53 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      * @since 3.0
      * @return Array An array containing any validation errors, and the template's body, header, and footer contents.
      */
-    public function saveTemplate()
+    public function saveTemplate($template_id = null)
     {
         $header = REDCap::filterHtml(preg_replace(array("/&lsquo;/", "/&rsquo;/", "/&nbsp;/"), array("'", "'", " "), $_POST["header-editor"]));
         $footer = REDCap::filterHtml(preg_replace(array("/&lsquo;/", "/&rsquo;/", "/&nbsp;/"), array("'", "'", " "), $_POST["footer-editor"]));
         $data = REDCap::filterHtml(preg_replace(array("/&lsquo;/", "/&rsquo;/", "/&nbsp;/"), array("'", "'", " "), $_POST["editor"]));
 
         $name = trim($_POST["templateName"]);
-        $action = $_POST["action"];
+        
+        // Validate Template
+        $template = new Template($this->templates_dir, $this->compiled_dir);
 
-        // Check if template has content
-        if (empty($data))
-        {
-            $HtmlPage = new HtmlPage();
-            $HtmlPage->PrintHeaderExt();
-            exit("<div class='yellow'>You shouldn't be seeing this page. You've likely resubmitted your form without any data</div><a href='" . $this->getUrl("index.php") . "'>Back to Front</a>");
-            $HtmlPage->PrintFooterExt();
-        }
-        // Template name cannot have director separator in it
-        else if (strpos($name, "/") !== FALSE || strpos($name, "\\") !== FALSE)
-        {
-            $other_errors[] = "<b>ERROR</b> You cannot have '/' or '\\' in your template name! Template was not saved!";
-            $filename = $name;
-
-            if ($action == "edit")
-            {
-                $currTemplateName = $_POST["currTemplateName"];
-            }
-        }
-        else
-        {
-            // Validate Template
-            $template = new Template($this->templates_dir, $this->compiled_dir);
-
-            $template_errors = $template->validateTemplate($data);
-            $header_errors = $template->validateTemplate($header);
-            $footer_errors = $template->validateTemplate($footer);
-               
-            $doc = new DOMDocument();
-            $doc->loadHTML("
-                <html>
-                    <head>
-                        <meta http-equiv='Content-Type' content='text/html;charset=utf-8'/>
-                    </head>
-                    <body>
-                        <header>$header</header>
-                        <footer>$footer</footer>
-                        <main>$data</main>
-                    </body>
-                </html>
-            ");
-
-            // Creating a new template
-            if ($action === "create")
-            {  
-                /**
-                 * If template already exists, return error, if not save template.
-                 */
-                if (!file_exists("$this->templates_dir{$name}_$this->pid.html") && !file_exists("$this->templates_dir{$name}_{$this->pid} - INVALID.html"))
-                {
-                    $filename = !empty($template_errors) || !empty($header_errors) || !empty($footer_errors) ? "{$name}_{$this->pid} - INVALID.html" : "{$name}_$this->pid.html";
-                    if ($doc->saveHTMLFile($this->templates_dir . $filename) === FALSE)
-                    {
-                        $other_errors[] = "<b>ERROR</b> Unable to save template. Please contact your REDCap administrator";
-                    }
-                    else
-                    {
-                        /**
-                         * Since the template has been saved:
-                         *  - All changes are not edits
-                         *  - It's current template name = the filename it was saved under
-                         */
-                        $action = "edit";
-                        $currTemplateName = $filename;
-                        REDCap::logEvent("Custom Template Engine - Template created", $filename);
-                    }
-                }
-                else
-                {
-                    $other_errors[] = "<b>ERROR</b> Template already exists! Please choose another name";
-                    $filename = $name;
-                }
-            }
-            // Editing an existing template
-            else
-            {
-                /**
-                 * If template doesn't exist, return error.
-                 * Else if template names are the same save the template.
-                 * Else, if the new template name is already in use return error, else save template and rename.
-                 */
-                $currTemplateName = $_POST["currTemplateName"];
-                if (file_exists($this->templates_dir . $currTemplateName))
-                {
-                    if ($currTemplateName == "{$name}_{$this->pid}.html" || $currTemplateName == "{$name}_{$this->pid} - INVALID.html")
-                    {
-                        if ($doc->saveHTMLFile($this->templates_dir . $currTemplateName) === FALSE)
-                        {
-                            $other_errors[] = "<b>ERROR</b> Unable to save template. Please contact your REDCap administrator";
-                        }
-                        else
-                        {
-                            REDCap::logEvent("Custom Template Engine - Template edited", $currTemplateName);
-                            if ((!empty($template_errors) || !empty($header_errors) || !empty($footer_errors)) && strpos($currTemplateName, " - INVALID") === FALSE)
-                            {
-                                $filename = strpos($currTemplateName, " - INVALID") !== FALSE ? $currTemplateName : str_replace(".html", " - INVALID.html", $currTemplateName);
-                                rename($this->templates_dir. $currTemplateName, $this->templates_dir . $filename);
-                            }
-                            else if (strpos($currTemplateName, " - INVALID") !== FALSE)
-                            {
-                                $filename = str_replace(" - INVALID", "", $currTemplateName);
-                                rename($this->templates_dir. $currTemplateName, $this->templates_dir . $filename);
-                            }
-                            $currTemplateName = $filename;
-                        }
-                    }
-                    else if (!file_exists("$this->templates_dir{$name}_$this->pid.html") && !file_exists("$this->templates_dir{$name}_{$this->pid} - INVALID.html") )
-                    {
-                        if ($doc->saveHTMLFile($this->templates_dir . $currTemplateName) === FALSE)
-                        {
-                            $other_errors[] = "<b>ERROR</b> Unable to save template. Please contact your REDCap administrator";
-                        }
-                        else
-                        {
-                            $filename = !empty($template_errors) || !empty($header_errors) || !empty($footer_errors) ? "{$name}_$this->pid - INVALID.html" : "{$name}_$this->pid.html";
-                            rename($this->templates_dir. $currTemplateName, $this->templates_dir . $filename);
-                            REDCap::logEvent("Custom Template Engine - Template edited", "Renamed template from '$currTemplateName' to '$filename'");
-                            $currTemplateName = $filename;
-                        }
-                    }
-                    else 
-                    {
-                        $other_errors[] = "<b>ERROR</b> Template already exists! Please choose another name";
-                        $filename = $name;
-                    }
-                }
-                else
-                {
-                    $other_errors[] = "<b>ERROR</b> You're editing a template that doesn't exist! Please contact your REDCap administrator about this";
-                    $filename = $name;
-                }
-            }
-        }
+        $template_errors = $template->validateTemplate($data);
+        $header_errors = $template->validateTemplate($header);
+        $footer_errors = $template->validateTemplate($footer);
+        
+        $template_id = $template_id ? $template_id : REDCap::reserveNewRecordId($this->getSystemSetting("config-pid"));
+        $invalid = !empty($template_errors) || !empty($header_errors) || !empty($footer_errors) ? 1 : 0;
+        
+        $doc = new DOMDocument();
+        $doc->loadHTML("
+            <html>
+                <head>
+                    <meta http-equiv='Content-Type' content='text/html;charset=utf-8'/>
+                </head>
+                <body>
+                    <header>$header</header>
+                    <footer>$footer</footer>
+                    <main>$data</main>
+                </body>
+            </html>
+        ");
+        
+        $results = REDCap::saveData([
+            "project_id" => $this->getSystemSetting("config-pid"),
+            "dataFormat" => "json",
+            "data" => json_encode([[
+                "record_id" => $template_id,
+                "pid" => $this->pid,
+                "name" => $name,
+                "invalid" => $invalid,
+                "header" => $header,
+                "footer" => $footer,
+                "body" => $data,
+                "full_html" => $doc->saveHTML()
+            ]]),
+            "overwriteBehavior" => "overwrite"
+       ]);
 
         /**
          * Check for any errors
@@ -1062,15 +686,15 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
             $errors["templateErrors"] = $template_errors;
         }
         
-        if (!empty($other_errors))
+        if (!empty($results["errors"]))
         {
-            $errors["otherErrors"] = $other_errors;
+            $errors["otherErrors"] = $results["errors"];
         }
         
         return array(
             "errors" => $errors,
             "redirect" => $this->getUrl("index.php") . "&created=1",
-            "currTemplateName" => $currTemplateName
+            "templateID" => $template_id
         );
     }
 
@@ -1160,7 +784,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         $errors = array();
 
         $records = $_POST["participantID"];
-        $template_filename = $_POST['template'];
+        $template_filename = "project{$this->pid}_template". $_POST['template'] . ".html";
         $template = new Template($this->templates_dir, $this->compiled_dir);
 
         $zip_name = "{$this->temp_dir}reports.zip";
@@ -1213,8 +837,18 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                         $dompdf->render();
                         $filled_template_pdf_content = $dompdf->output();
 
-                        // Add PDF to ZIP
-                        if ($z->addFromString("reports/$filename.pdf", $filled_template_pdf_content) !== true)
+                        // Add PDF to ZIP'
+                        
+                        $doc = REDCap::getData([
+                        "project_id" => $this->getSystemSetting("config-pid"),
+                        "return_format" => "json",
+                        "records" => $_POST['template'],
+                        "fields" => "name"
+                            ]);
+                        $doc = json_decode($doc, true)[0];
+                        $name = $doc["name"];
+                        
+                        if ($z->addFromString("reports/$name.pdf", $filled_template_pdf_content) !== true)
                         {
                             $errors[] = "<p>ERROR</p> Could not add $filename to the ZIP";
                             break;
@@ -1315,12 +949,16 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         
         $record = $_POST["participantID"][0];
         
-        if (empty($record))
-        {
-            exit("<div class='red'>No record has been select. Please go back and select a record to fill the template.</div><a href='" . $this->getUrl("index.php") . "'>Back to Front</a>");
-        }
+        $doc = REDCap::getData([
+            "project_id" => $this->getSystemSetting("config-pid"),
+            "return_format" => "json",
+            "records" => $_POST['template'],
+            "fields" => "name"
+        ]);
+        $doc = json_decode($doc, true)[0];
+        $name = $doc["name"];
         
-        $template_filename = $_POST['template'];
+        $template_filename = "project{$this->pid}_template". $_POST['template'] . ".html";;
         $template = new Template($this->templates_dir, $this->compiled_dir);
 
         try
@@ -1403,7 +1041,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                                 <td class="data">
                                     <div class="row">
                                         <div class="col-md-5">
-                                            <input id="filename" name="filename" type="text" class="form-control" value="<?php print basename($template_filename, "_$this->pid.html") . " - $record";?>" required>
+                                            <input id="filename" name="filename" type="text" class="form-control" value="<?php print $name . " - $record";?>" required>
                                             <input name="record" type="hidden" value="<?php print $record;?>">
                                         </div>
                                     </div>
@@ -1556,24 +1194,19 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         if (!empty($template))
         {
             $this->checkPermissions();
-            $template_name = $curr_template_name = $template;
-            $template = file_get_contents($this->templates_dir . $template_name);
+            
+            $doc = REDCap::getData([
+                "project_id" => $this->getSystemSetting("config-pid"),
+                "return_format" => "json",
+                "records" => $template,
+            ]);
 
-            $doc = new DOMDocument();
-            $doc->loadHTML($template);
-
-            $header = $doc->getElementsByTagName("header")->item(0);
-            $footer = $doc->getElementsByTagName("footer")->item(0);
-            $main = $doc->getElementsByTagName("main")->item(0);
-
-            $main_data = $doc->saveHTML($main);
-            $header_data = empty($header) ? "" : $doc->saveHTML($header);
-            $footer_data = empty($footer)? "" : $doc->saveHTML($footer);
-            $action = "edit";
-        }
-        else
-        {
-            $action = "create";
+            $doc = json_decode($doc, true)[0];
+            
+            $curr_template_name = $doc["name"];
+            $header_data = $doc["header"];
+            $footer_data = $doc["footer"];
+            $main_data = $doc["body"];
         }
         ?>
         <link rel="stylesheet" href="<?php print $this->getUrl("app.css"); ?>" type="text/css">
@@ -2166,9 +1799,8 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                                 <td style="width:25%;">Template Name <strong style="color:red">*Required</strong></td>
                                 <td class="data">
                                     <div class="col-md-5">
-                                        <input id="templateName" name="templateName" type="text" class="form-control" value="<?php print str_replace(array("_$this->pid", " - INVALID", ".html"), "", $template_name); ?>">
-                                        <input id="action" type="hidden" name="action" value="<?php print $action;?>">
-                                        <input id="currTemplateName" name="currTemplateName" type="hidden" value="<?php print $curr_template_name; ?>">
+                                        <input id="templateName" name="templateName" type="text" class="form-control" value="<?php print $curr_template_name; ?>">
+                                        <input id="templateID" type="hidden" name="templateID" value="<?php print $template;?>">
                                     </div>
                                 </td>
                             </tr>
@@ -2282,9 +1914,8 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                                     $("#body-errors-header").hide();
                                     $("#body-errors").hide()
                                 }
-
-                                $("#currTemplateName").val(json.currTemplateName);
-                                $("#action").val("edit");
+                                
+                                $("#templateID").val(json.templateID);
                                 $("#errors-container").show();
                                 window.scroll(0,0); // Errors are at top of page
                             }
@@ -2534,22 +2165,25 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         $participant_options = $this->getDropdownOptions($_GET["filter"]);
         $total = count($participant_options);
 
-        $all_templates = array_diff(scandir($this->templates_dir), array("..", "."));
+        $all_templates = REDCap::getData([
+            "project_id" => $this->getSystemSetting("config-pid"),
+            "return_format" => "json",
+            "fields" => ["record_id", "name", "invalid"],
+            "filterLogic" => "[pid] = $this->pid"
+        ]);
+        $all_templates = json_decode($all_templates, true);
+        
         $edit_templates = array();
         $valid_templates = array();
 
         // Grab all templates for current project
         foreach($all_templates as $template)
         {
-            if (strpos($template, "_$this->pid.html") !== FALSE)
+            if ($template["invalid"] == 0) 
             {
-                array_push($valid_templates, $template);
-                array_push($edit_templates, $template);
+                $valid_templates[$template["record_id"]] = $template["name"];
             }
-            else if (strpos($template, "_{$this->pid} - INVALID.html") !== FALSE)
-            {
-                array_push($edit_templates, $template);
-            }
+            $edit_templates[$template["record_id"]] = $template["name"];
         }
         ?>
         <!-- boostrap-select files -->
@@ -2641,9 +2275,9 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                                         <?php if (sizeof($valid_templates) > 0):?>
                                             <select name="template" class="form-control">
                                                 <?php
-                                                    foreach($valid_templates as $template)
+                                                    foreach($valid_templates as $id => $name)
                                                     {
-                                                        print "<option value=\"" . $template . "\">" . $template . "</option>";
+                                                        print "<option value=\"" . $id . "\">" . $name . "</option>";
                                                     }
                                                 ?>
                                             </select>
@@ -2684,9 +2318,9 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                         <div class="modal-body">
                             <select name="template" style="display:block; margin: 0 auto;" class="form-control">
                                 <?php
-                                    foreach($edit_templates as $template)
+                                    foreach($edit_templates as $id => $name)
                                     {
-                                        print "<option value=\"" . $template . "\">" . $template . "</option>";
+                                        print "<option value=\"" . $id . "\">" . $name . "</option>";
                                     }
                                 ?>        
                             </select>
@@ -2712,9 +2346,9 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                     <div class="modal-body">
                         <select id="deleteTemplateDropdown" name="template" style="display:block; margin: 0 auto;" class="form-control">
                             <?php
-                                foreach($edit_templates as $template)
+                                foreach($edit_templates as $id => $name)
                                 {
-                                    print "<option value=\"" . $template . "\">" . $template . "</option>";
+                                    print "<option value=\"" . $id . "\">" . $name . "</option>";
                                 }
                             ?>        
                         </select>
@@ -2749,10 +2383,10 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
             </div>
         </div>
         <script>
-            $("#toDelete").text($("#deleteTemplateDropdown").val());
+            $("#toDelete").text($("#deleteTemplateDropdown option:selected").text());
             $("#templateToDelete").val($("#deleteTemplateDropdown").val());
             $("#deleteTemplateDropdown").change(function() {
-                $("#toDelete").text($(this).val());
+                $("#toDelete").text($(this).find("option:selected").text());
                 $("#templateToDelete").val($(this).val());
             });
 

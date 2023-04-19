@@ -4,5 +4,5 @@
  * and save template.
  */
 $customTemplateEngine = new \BCCHR\CustomTemplateEngine\CustomTemplateEngine();
-$result = $customTemplateEngine->saveTemplate();
+$result = $customTemplateEngine->saveTemplate($_POST["templateID"]);
 print json_encode($result);

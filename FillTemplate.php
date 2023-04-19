@@ -6,6 +6,22 @@
  */
 $customTemplateEngine = new \BCCHR\CustomTemplateEngine\CustomTemplateEngine();
 
+$template_id = $_POST["template"];
+$template_data = REDCap::getData([
+    "project_id" => $customTemplateEngine->getSystemSetting("config-pid"),
+    "return_format" => "json",
+    "records" => $template,
+    "fields" => "full_html"
+]);
+$template_data = json_decode($template_data, true)[0];
+$template_html = $template_data["full_html"];
+
+$file_path = $customTemplateEngine->getSystemSetting("templates-folder") . "project" . $_GET["pid"] . "_template" . $template_id . ".html";
+
+if (!file_exists($file_path)) {
+    file_put_contents($file_path, $template_html);
+}
+
 if (sizeof($_POST["participantID"]) == 1)
 {
     /**

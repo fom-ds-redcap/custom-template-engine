@@ -64,11 +64,12 @@ if (isset($main) && !empty($main))
 
     $dompdf = new Dompdf();
     $pdf_content = $customTemplateEngine->createPDF($dompdf, $header, $footer, $main);
+    file_put_contents($customTemplateEngine->getSystemSetting("temp-folder") . $filename, $pdf_content);
 
-    if (!$customTemplateEngine->saveFileToField($filename, $pdf_content, $field_name, $record, $event_id))
+    if (!$customTemplateEngine->saveFileToField($filename, $field_name, $record, $event_id))
     {
         REDCap::logEvent("Custom Template Engine - Failed to Save Report to Field!", "Field name: $field_name", "", $record);
-        print json_encode(array("error" => "An unknown error occured. Please contact the BCCHR REDCap team."));
+        print json_encode(array("error" => "Parameters to REDCap::addFileToField were incorrect. Please contact your REDCap administrator."));
         return;
     }
 
