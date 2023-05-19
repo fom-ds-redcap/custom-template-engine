@@ -46,6 +46,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
          */
         $this->templates_dir = $this->getSystemSetting("templates-folder");
         $this->compiled_dir = $this->getSystemSetting("compiled-templates-folder");
+        $this->temp_dir = $this->getSystemSetting("temp-folder");
         $this->pid = $this->getProjectId();
 
         if (!empty($this->pid))
@@ -69,11 +70,6 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         if (substr($this->temp_dir, -1) != DIRECTORY_SEPARATOR)
         {
             $this->temp_dir = $this->temp_dir . DIRECTORY_SEPARATOR;
-        }
-
-        if (substr($this->img_dir, -1) != DIRECTORY_SEPARATOR)
-        {
-            $this->img_dir = $this->img_dir . DIRECTORY_SEPARATOR;
         }
     }
 
@@ -117,6 +113,21 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                 }
             }
         }
+        
+        if (empty($this->temp_dir))
+        {
+            exit("<div class='red'><b>ERROR</b> Compiled templates directory has not been set. Please contact your REDCap administrator.</div>");
+        }
+        else
+        {
+            if (!file_exists($this->temp_dir))
+            {
+                if (!mkdir($this->temp_dir, 0777, true))
+                {
+                    exit("<div class='red'><b>ERROR</b> Unable to create directory $this->temp_dir to store temporary files. Please contact your systems administrator to  make sure the location is writable.</div>");
+                }
+            }
+        }
     }
 
     /**
@@ -141,7 +152,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                     { name: 'clipboard', items: [ 'Undo', 'Redo' ] },
                     { name: 'basicstyles', items: [ 'Bold', 'Italic', 'Underline', 'Strike', 'RemoveFormat'] },
                     { name: 'paragraph', items: [ 'NumberedList', 'BulletedList', '-', 'Outdent', 'Indent', '-'] },
-                    { name: 'insert', items: [ 'Image', 'Table', 'HorizontalRule' ] },
+                    { name: 'insert', items: [ 'Table', 'HorizontalRule' ] },
                     { name: 'styles', items: [ 'Format', 'Font', 'FontSize' ] },
                     { name: 'colors', items: [ 'TextColor', 'BGColor', 'CopyFormatting' ] },
                     { name: 'align', items: [ 'JustifyLeft', 'JustifyCenter', 'JustifyRight', 'JustifyBlock' ] },
@@ -150,11 +161,8 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                 height: <?php print $height; ?>,
                 bodyClass: 'document-editor',
                 contentsCss: [ 'https://cdn.ckeditor.com/4.8.0/full-all/contents.css', '<?php print $this->getUrl("app.css"); ?>' ],
-                filebrowserBrowseUrl: '<?php print $this->getUrl("BrowseImages.php"); ?>&type=Images',
-                filebrowserUploadUrl: '<?php print $this->getUrl("UploadImages.php"); ?>&type=Images',
                 filebrowserUploadMethod: 'form',
                 fillEmptyBlocks: false,
-                extraAllowedContent: '*{*}',
                 font_names: 'Arial/Arial, Helvetica, sans-serif; Times New Roman/Times New Roman, Times, serif; Courier; DejaVu; DejaVu Sans, sans-serif'
             });
         </script>
@@ -296,7 +304,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      */
     public function saveFileToField($filename, $field_name, $record, $event_id)
     {
-        $docs_id = REDCap::storeFile($this->getSystemSetting("temp-folder") . $filename, $this->pid); 
+        $docs_id = REDCap::storeFile($this->temp_dir. $filename, $this->pid); 
         $instance = $this->getLatestRepeatableInstance($record, $event_id, $field_name);
         return REDCap::addFileToField($docs_id, $this->pid, $record, $field_name, $event_id, $instance);
     }
@@ -313,7 +321,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      */
     private function saveToFileRepository($filename, $file_contents, $file_extension)  
     {   
-        $file_path = $this->getSystemSetting("temp-folder") . "{$filename}.{$file_extension}";
+        $file_path = $this->temp_dir . "{$filename}.{$file_extension}";
         file_put_contents($file_path, $file_contents);
         $docs_id = REDCap::storeFile($file_path, $this->pid);
         return REDCap::addFileToRepository($docs_id, $this->pid);
@@ -848,7 +856,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                         $doc = json_decode($doc, true)[0];
                         $name = $doc["name"];
                         
-                        if ($z->addFromString("reports/$name.pdf", $filled_template_pdf_content) !== true)
+                        if ($z->addFromString("reports/$name - $record.pdf", $filled_template_pdf_content) !== true)
                         {
                             $errors[] = "<p>ERROR</p> Could not add $filename to the ZIP";
                             break;
