@@ -13,7 +13,7 @@ $header = REDCap::filterHtml(preg_replace("/&nbsp;/", " ", $_POST["header-editor
 $footer = REDCap::filterHtml(preg_replace("/&nbsp;/", " ", $_POST["footer-editor"]));
 $main = REDCap::filterHtml(preg_replace("/&nbsp;/", " ", $_POST["editor"]));
 
-$filename = $_POST["filename"];
+$filename = $_POST["filename"] . ".pdf";
 $record = $_POST["record"];
 
 if (isset($main) && !empty($main))
