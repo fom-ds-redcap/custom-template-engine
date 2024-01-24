@@ -640,6 +640,13 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
         
         $template_id = $template_id ? $template_id : REDCap::reserveNewRecordId($this->getSystemSetting("config-pid"));
         $invalid = !empty($template_errors) || !empty($header_errors) || !empty($footer_errors) ? 1 : 0;
+
+        // Template name should not have slashes
+        if (strpos($name, "/") !== FALSE || strpos($name, "\\") !== FALSE)
+        {
+            $errors["otherErrors"][] = "<b>ERROR</b> You cannot have '/' or '\\' in your template name! Template was not saved!";
+            $invalid = 1;
+        }
         
         $doc = new DOMDocument();
         $doc->loadHTML("
@@ -733,8 +740,6 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      * Formats the contents within the PDF, and uses DOMPDF to output PDF to browser.
      * If saving to the File Repository is allowed, then a copy of the PDF is saved there.
      * Upon successful download, log in REDCap Returns Warning if main content editor is empty.
-     * 
-     * Code to save file to the File Repository was taken from redcap version/FileRepository/index.php.
      * 
      * @since 3.0
      */
@@ -2185,8 +2190,11 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
             if ($template["invalid"] == 0) 
             {
                 $valid_templates[$template["record_id"]] = $template["name"];
+                $edit_templates[$template["record_id"]] = $template["name"];
             }
-            $edit_templates[$template["record_id"]] = $template["name"];
+            else {
+                $edit_templates[$template["record_id"]] = $template["name"] . " - INVALID";
+            }
         }
         ?>
         <!-- boostrap-select files -->
@@ -2422,8 +2430,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                             Cookies.remove('fileDownloadToken');
                             $("#fill-template-btn").prop("disabled", false);
                             $("#progressBar").progressbar("destroy");
-                            $("#participantIDs").val("default");
-                            $("#participantIDs").selectpicker("refresh");
+                            $("#participantIDs").selectpicker("val", "");
                             $("#fill-template-btn").text("Fill Template");
                         }
                     }, 1000)
