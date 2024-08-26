@@ -443,6 +443,7 @@ class Template
         if (!empty($syntax))
         {
             $errors = $this->validateFieldQueries($syntax, $line_num);
+            $parts = $this->getSyntaxParts($syntax);
 
             if ((sizeof(explode("'", $syntax)) - 1) % 2 > 0)
             {
@@ -468,8 +469,6 @@ class Template
             {
                 $errors[] = "<b>ERROR</b> [EDITOR] LINE [$line_num] Odd number of square brackets [. You've either added an extra bracket, or forgot to close one.";
             }
-            
-            $parts = $this->getSyntaxParts($syntax);
 
             foreach($parts as $index => $part)
             {

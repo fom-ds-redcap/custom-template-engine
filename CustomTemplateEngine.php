@@ -2083,6 +2083,9 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
      */
     function getDropdownOptions($filter = false)
     {
+        $previously_printed = [];
+        $participant_options = [];
+
         $rights = REDCap::getUserRights($this->userid);
         $id_field = REDCap::getRecordIdField();
         $records = json_decode(REDCap::getData("json", null, array($id_field), null, $rights[$this->userid]["group_id"]), true);
@@ -2262,7 +2265,7 @@ class CustomTemplateEngine extends \ExternalModules\AbstractExternalModule
                                         Choose up to 20 records
                                     </td>
                                     <td class="data">
-                                        <input id="applyFilter" type="checkbox" <?php print $_GET["filter"] == "1" ? checked : ""; ?>>
+                                        <input id="applyFilter" type="checkbox" <?php print $_GET["filter"] == "1" ? "checked" : ""; ?>>
                                         <label for="applyFilter">Filter records previously processed</label>
                                         <?php if (sizeof($participant_options) > 0):?>
                                             <select id="participantIDs" name="participantID[]" class="form-control selectpicker" style="background-color:white" data-live-search="true" data-max-options="20" multiple required>
