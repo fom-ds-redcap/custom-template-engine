@@ -41,7 +41,7 @@ if (isset($main) && !empty($main))
                 order by event_id asc
                 limit 1";
 
-        $result = $customTemplateEngine->query($sql);
+        $result = $customTemplateEngine->query($sql, []);
 
         if (!$result)
         {
