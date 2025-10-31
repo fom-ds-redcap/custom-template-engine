@@ -1,10 +1,17 @@
 <?php
-
 /**
  * Create instsance of Custom Template Engine, and display template 
  * filled with REDcap data on Fill Template page.
  */
 $customTemplateEngine = new \BCCHR\CustomTemplateEngine\CustomTemplateEngine();
+
+// Redirect to home page if $_POST fields don't exist
+if (!($_POST["participantID"] && $_POST["template"]))
+{
+    $url = $customTemplateEngine->getUrl("index.php");
+    header("Location: " . $url);
+    exit();
+}
 
 $template_id = $_POST["template"];
 $template_data = REDCap::getData([
